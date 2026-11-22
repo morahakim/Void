@@ -7,6 +7,7 @@
 
 import Foundation
 import ARKit
+import simd
 
 final class FaceTrackingManager: NSObject, ObservableObject, ARSessionDelegate {
     
@@ -21,6 +22,7 @@ final class FaceTrackingManager: NSObject, ObservableObject, ARSessionDelegate {
     @Published var isRunning = false
     @Published var isFaceDetected = false
     @Published var eyesClosed = false
+    @Published var headYaw: Float = 0
     
     static var isSupported: Bool {
         ARFaceTrackingConfiguration.isSupported
@@ -102,11 +104,17 @@ final class FaceTrackingManager: NSObject, ObservableObject, ARSessionDelegate {
         }
 
         let tracked = face.isTracked
+        let yaw = atan2(
+            face.transform.columns.0.z,
+            face.transform.columns.0.x
+        )
+
         let left = face.blendShapes[.eyeBlinkLeft]?.floatValue ?? 0
         let right = face.blendShapes[.eyeBlinkRight]?.floatValue ?? 0
 
         updateOnMain {
             self.isFaceDetected = tracked
+            self.headYaw = yaw
 
             if min(left, right) > self.closedThreshold {
                 self.eyesClosed = true

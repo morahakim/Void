@@ -17,16 +17,11 @@ struct FaceTrackingView: View {
     
     var onContinue: () -> Void = { }
     
-    private enum Phase {
-        case ready
-        case face
-        case close
-        case reveal
-        case completed
-    }
     
     @State private var phase: Phase = .ready
     @State private var faceSince: Date?
+    @State private var neutralYaw: Float?
+    @State private var yawSamples: [Float] = []
     @State private var closedSince: Date?
     @State private var lastClosedAt: Date?
     @State private var countedSeconds = 0
@@ -34,6 +29,24 @@ struct FaceTrackingView: View {
     @State private var hintLevel = 0
     @State private var allHintsRevealedAt: Date?
     @State private var skipAvailable = false
+    @State private var headPosition: HeadPosition = .unknown
+    @State private var hasLeftCenter = false
+    @State private var sequence: [HeadPosition] = [
+        .left,
+        .right,
+        .center,
+        .left
+    ]
+
+    @State private var sequenceIndex = 0
+    @State private var observationIndex = 0
+    @State private var observationPosition: HeadPosition = .unknown
+    @State private var observationStartedAt: Date? = nil
+    @State private var isWaitingForCenter = false
+    @State private var lastAcceptedPosition: HeadPosition = .center
+    @State private var preparingSince: Date? = nil
+    @State private var lastDetectedPosition: HeadPosition = .center
+    @State private var hasRegisteredMovement = false
     
     private let faceDuration = 1.0
     private let closeDuration = 5.0
@@ -80,7 +93,7 @@ struct FaceTrackingView: View {
                 Spacer(minLength: 16)
                 
                 statusSection
-                
+                visual.padding(.top, 16)
                 completionMessage
                     .padding(.horizontal, 28)
 
@@ -91,11 +104,7 @@ struct FaceTrackingView: View {
             .voidScreen()
             
             Color.black
-                .opacity(
-                    phase == .close || phase == .reveal
-                        ? closeProgress * 0.92
-                        : 0
-                )
+                .opacity(0)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
                 .animation(.linear(duration: 0.2), value: closeProgress)
@@ -103,7 +112,7 @@ struct FaceTrackingView: View {
                 }
                 .onChange(of: face.isRunning) { _, running in
                     guard running, phase == .ready else { return }
-                    phase = .face
+                    phase = .calibrating
                 }
                 .onChange(of: phase) { _, _ in
                     // Each phase has its own hints; start each one fresh.
@@ -128,66 +137,155 @@ struct FaceTrackingView: View {
 
             // MARK: - Sections
 
-            private var visual: some View {
-                let tint = phase == .completed ? VoidColor.success : VoidTheme.accent
+    private var visual: some View {
+        let positions: [HeadPosition] = [.left, .center, .right]
 
-                return ZStack {
-                    Circle()
-                        .stroke(VoidTheme.secondary.opacity(0.4), lineWidth: 1)
-                        .frame(width: 220, height: 220)
+        return VStack(spacing: 28) {
+            HStack(spacing: 24) {
+                ForEach(Array(positions.enumerated()), id: \.offset) { index, position in
+                    VStack(spacing: 12) {
+                        Circle()
+                            .stroke(
+                                VoidTheme.accent.opacity(0.6),
+                                lineWidth: 1
+                            )
+                            .background {
+                                Circle()
+                                    .fill(
+                                        observationPosition == position
+                                            ? VoidTheme.accent.opacity(0.25)
+                                            : .clear
+                                    )
+                            }
+                            .frame(width: 54, height: 54)
+                            .overlay {
+                                Circle()
+                                    .fill(VoidTheme.accent)
+                                    .frame(width: 7, height: 7)
+                            }
 
-                    // Fills over the five seconds.
-                    Circle()
-                        .trim(from: 0, to: closeProgress)
-                        .stroke(
-                            VoidTheme.accent,
-                            style: StrokeStyle(lineWidth: 2, lineCap: .round)
-                        )
-                        .rotationEffect(.degrees(-90))
-                        .frame(width: 220, height: 220)
-                        .opacity(phase == .close ? 1 : 0)
-
-                    if phase == .reveal || phase == .completed {
-                        ZStack {
-                            // Outer glow
-                            Circle()
-                                .fill(VoidTheme.accent.opacity(0.12))
-                                .frame(width: 110, height: 110)
-                                .blur(radius: 25)
-
-                            // Inner light
-                            Circle()
-                                .fill(VoidTheme.accent.opacity(0.2))
-                                .frame(width: 48, height: 48)
-                                .blur(radius: 12)
-
-                            Image(systemName: "eye.slash")
-                                .font(.system(size: 42, weight: .ultraLight))
-                                .foregroundStyle(tint)
-                        }
-                        .transition(.scale(scale: 0.65).combined(with: .opacity))
-                    } else {                        // The eye mirrors the player's eyes.
-                        ZStack {
-                            Ellipse()
-                                .stroke(tint, lineWidth: 1.25)
-                                .frame(width: 72, height: isEyeOpen ? 32 : 2)
-
-                            Circle()
-                                .fill(tint)
-                                .frame(width: 10, height: 10)
-                                .opacity(isEyeOpen ? 1 : 0)
-                        }
-                        .animation(
-                            reduceMotion ? nil : .easeInOut(duration: 0.2),
-                            value: isEyeOpen
-                        )
+                        Text(["LEFT", "CENTER", "RIGHT"][index])
+                            .font(.system(size: 9, design: .monospaced))
+                            .tracking(1)
+                            .foregroundStyle(VoidTheme.secondary)
                     }
                 }
-                .animation(.easeInOut(duration: 0.8), value: phase)
-                .frame(height: 280)
-                .accessibilityHidden(true)
             }
 
+            if phase == .observing {
+                HStack(spacing: 12) {
+                    ForEach(sequence.indices, id: \.self) { index in
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(
+                                index == observationIndex
+                                    ? VoidTheme.accent
+                                    : VoidTheme.secondary.opacity(0.25)
+                            )
+                            .frame(width: 28, height: 3)
+                    }
+                }
+            }
+
+            if phase == .reconstructing {
+                HStack(spacing: 14) {
+                    ForEach(sequence.indices, id: \.self) { index in
+                        Circle()
+                            .fill(
+                                index < sequenceIndex
+                                    ? VoidColor.success
+                                    : VoidTheme.secondary.opacity(0.25)
+                            )
+                            .frame(
+                                width: index < sequenceIndex ? 11 : 7,
+                                height: index < sequenceIndex ? 11 : 7
+                            )
+                            .shadow(
+                                color: index < sequenceIndex
+                                    ? VoidColor.success.opacity(0.5)
+                                    : .clear,
+                                radius: 8
+                            )
+                            .animation(
+                                .spring(response: 0.35, dampingFraction: 0.6),
+                                value: sequenceIndex
+                            )
+                    }
+                }
+            }
+        }
+        .frame(height: 280)
+        .animation(.easeInOut(duration: 0.2), value: observationIndex)
+        .accessibilityHidden(true)
+    }
+
+    private func evaluatePreparing(now: Date) {
+        guard face.isFaceDetected else {
+            preparingSince = nil
+            return
+        }
+
+        guard face.eyesClosed else {
+            preparingSince = nil
+            return
+        }
+
+        if preparingSince == nil {
+            preparingSince = now
+            return
+        }
+
+        guard let preparingSince else { return }
+
+        if now.timeIntervalSince(preparingSince) >= 1.0 {
+            self.preparingSince = nil
+            sequenceIndex = 0
+            isWaitingForCenter = false
+            lastDetectedPosition = .center
+            hasRegisteredMovement = false
+            phase = .reconstructing
+            impact(.light)
+        }
+    }
+    
+    private func evaluateReconstruction() {
+        guard face.isFaceDetected else { return }
+
+        guard face.eyesClosed else {
+            lastDetectedPosition = detectHeadPosition()
+            return
+        }
+
+        let currentPosition = detectHeadPosition()
+
+        guard currentPosition != .unknown,
+              currentPosition != lastDetectedPosition else {
+            return
+        }
+
+        lastDetectedPosition = currentPosition
+
+        guard sequenceIndex < sequence.count else { return }
+
+        if currentPosition == .center,
+           sequence[sequenceIndex] != .center {
+            return
+        }
+
+        if currentPosition == sequence[sequenceIndex] {
+            sequenceIndex += 1
+            impact(.light)
+            if sequenceIndex >= sequence.count {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                    phase = .completed
+                }
+
+                successFeedback.notificationOccurred(.success)
+            }
+        } else {
+            sequenceIndex = 0
+            impact(.light)
+        }
+    }
             private var statusSection: some View {
                 VStack(spacing: 8) {
                     Text(statusText)
@@ -259,7 +357,7 @@ struct FaceTrackingView: View {
                             }
                             .buttonStyle(VoidPrimaryButtonStyle())
 
-                        case .face, .close:
+                        case .calibrating, .observing, .preparing, .reconstructing:
                             HStack(spacing: 8) {
                                 if hintLevel < currentHints.count {
                                     PuzzleHintButton(
@@ -276,9 +374,6 @@ struct FaceTrackingView: View {
                                     .transition(.opacity)
                                 }
                             }
-
-                        case .reveal:
-                            Color.clear
                         }
                     }
                 }
@@ -315,22 +410,44 @@ struct FaceTrackingView: View {
             // MARK: - Derived State
 
             private var isEyeOpen: Bool {
-                face.isRunning && face.isFaceDetected && !face.eyesClosed
+                face.isRunning && face.isFaceDetected
             }
 
-            private var currentHints: [String] {
-                phase == .close ? closeHints : faceHints
-            }
+    private var currentHints: [String] {
+        [
+            "What you saw is still there.",
+            "Remember the order, not the shapes.",
+            "Move only when you know where to go."
+        ]
+    }
 
-            private var revealedHint: String? {
-                guard phase == .face || phase == .close,
-                      hintLevel > 0,
-                      hintLevel <= currentHints.count else {
-                    return nil
-                }
+    private var revealedHint: String? {
+        guard phase != .ready,
+              phase != .completed,
+              hintLevel > 0,
+              hintLevel <= currentHints.count else {
+            return nil
+        }
 
-                return currentHints[hintLevel - 1]
-            }
+        return currentHints[hintLevel - 1]
+    }
+
+    private var primaryText: String? {
+        switch phase {
+        case .ready:
+            return nil
+        case .calibrating:
+            return "Stay still. Let the pattern find you."
+        case .observing:
+            return "Remember the sequence."
+        case .preparing:
+            return "Keep the pattern in your mind."
+        case .reconstructing:
+            return "Rebuild what you remember."
+        case .completed:
+            return nil
+        }
+    }
 
             private var unavailableText: String? {
                 switch face.availability {
@@ -343,42 +460,45 @@ struct FaceTrackingView: View {
                 }
             }
 
-            private var primaryText: String? {
-                switch phase {
-                case .face:
-                    return "It is waiting for you."
-                case .close:
-                    return "Some things only appear when you stop looking."
-                case .ready, .reveal, .completed:
-                    return nil
-                }
-            }
+    private var statusText: String {
+        switch face.availability {
+        case .unsupported:
+            return "UNAVAILABLE"
+        case .denied:
+            return "NO CAMERA ACCESS"
+        case .unknown, .ready:
+            break
+        }
 
-            private var statusText: String {
-                switch face.availability {
-                case .unsupported:
-                    return "UNAVAILABLE"
-                case .denied:
-                    return "NO CAMERA ACCESS"
-                case .unknown, .ready:
-                    break
-                }
-
-                switch phase {
-                case .ready:
-                    return "WAITING"
-                case .face:
-                    return face.isFaceDetected ? "FOUND YOU" : "SEARCHING"
-                case .close:
-                    return closedSince == nil ? "WATCHING" : "\(countedSeconds) / 5"
-                case .reveal:
-                    return "OPEN YOUR EYES"
-                case .completed:
-                    return "FOUND IT."
-                }
-            }
+        switch phase {
+        case .ready:
+            return "WAITING"
+        case .calibrating:
+            return face.isFaceDetected ? "CALIBRATING" : "SEARCHING"
+        case .observing:
+            return "OBSERVE"
+        case .preparing:
+            return "REMEMBER"
+        case .reconstructing:
+            return "RECONSTRUCT"
+        case .completed:
+            return "FOUND IT."
+        }
+    }
 
             // MARK: - Puzzle Logic
+    
+    private func detectHeadPosition() -> HeadPosition {
+        guard let neutralYaw else { return .unknown }
+
+        let deviation = face.headYaw - neutralYaw
+
+        if deviation <= -0.18 { return .right }
+        if deviation >= 0.18 { return .left }
+        if abs(deviation) <= 0.10 { return .center }
+
+        return .unknown
+    }
 
             private func evaluate() {
                 let now = Date()
@@ -390,92 +510,96 @@ struct FaceTrackingView: View {
                 }
 
                 switch phase {
-                case .face:
+                case .calibrating:
                     evaluateFace(now: now)
-                case .close:
-                    evaluateClose(now: now)
-                case .reveal:
-                    // Opening the eyes (or moving away) after the reveal completes it.
-                    if !face.eyesClosed || !face.isFaceDetected {
-                        phase = .completed
-                        PuzzleProgress.markDiscovered(3)
-                    }
+
+                case .observing:
+                    evaluateObservation(now: now)
+
+                case .preparing:
+                    evaluatePreparing(now: now)
+
+                case .reconstructing:
+                    evaluateReconstruction()
+
                 case .ready, .completed:
                     break
                 }
             }
 
-            private func evaluateFace(now: Date) {
-                guard face.isFaceDetected, !face.eyesClosed else {
-                    faceSince = nil
-                    return
-                }
+    private func evaluateFace(now: Date) {
+        guard face.isFaceDetected else {
+            faceSince = nil
+            yawSamples.removeAll()
+            return
+        }
 
-                if faceSince == nil {
-                    faceSince = now
-                }
+        if faceSince == nil {
+            faceSince = now
+            yawSamples.removeAll()
+        }
 
-                if let faceSince, now.timeIntervalSince(faceSince) >= faceDuration {
-                    self.faceSince = nil
-                    phase = .close
-                    impact(.light)
-                }
-            }
+        yawSamples.append(face.headYaw)
 
-            private func evaluateClose(now: Date) {
-                if face.isFaceDetected && face.eyesClosed {
-                    if closedSince == nil {
-                        closedSince = now
-                    }
-                    lastClosedAt = now
-                } else if let lastClosedAt,
-                          now.timeIntervalSince(lastClosedAt) > gracePeriod {
-                    // Eyes opened or face lost: the count restarts and the
-                    // vibrations stop, so the player can feel the reset.
-                    resetCount()
-                    return
-                }
+        if let faceSince,
+           now.timeIntervalSince(faceSince) >= faceDuration {
 
-                guard let closedSince else { return }
+            guard !yawSamples.isEmpty else { return }
 
-                let elapsed = now.timeIntervalSince(closedSince)
-                closeProgress = min(elapsed / closeDuration, 1)
+            neutralYaw = yawSamples.reduce(0, +) / Float(yawSamples.count)
 
-                let seconds = Int(elapsed)
+            self.faceSince = nil
+            yawSamples.removeAll()
 
-                if seconds > countedSeconds, seconds < Int(closeDuration) {
-                    countedSeconds = seconds
+            observationStartedAt = Date()
+            observationIndex = 0
+            observationPosition = sequence[0]
 
-                    switch seconds {
-                    case 1, 2:
-                        impact(.soft)
+            phase = .observing
+            impact(.light)
 
-                    case 3, 4:
-                        impact(.medium)
+            print("UNSEEN CALIBRATION: \(neutralYaw ?? 0)")
+        }
+    }
+    
+    private func evaluateObservation(now: Date) {
+        guard let startTime = observationStartedAt else {
+            observationStartedAt = now
+            observationIndex = 0
+            observationPosition = sequence[0]
+            return
+        }
 
-                    default:
-                        break
-                    }
-                }
+        let elapsed = now.timeIntervalSince(startTime)
 
-                if elapsed >= closeDuration {
-                    countedSeconds = Int(closeDuration)
-                    phase = .reveal
+        let stepDuration = 0.8
+        let gapDuration = 0.3
+        let cycleDuration = stepDuration + gapDuration
 
-                    // The signal to open the eyes.
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
-                }
-            }
+        let totalDuration =
+            Double(sequence.count - 1) * cycleDuration + stepDuration
 
-            private func resetCount() {
-                closedSince = nil
-                lastClosedAt = nil
-                countedSeconds = 0
+        if elapsed >= totalDuration {
+            observationPosition = .unknown
+            observationStartedAt = nil
+            phase = .preparing
+            impact(.light)
+            return
+        }
 
-                withAnimation(.easeOut(duration: 0.3)) {
-                    closeProgress = 0
-                }
-            }
+        let currentIndex = Int(elapsed / cycleDuration)
+        let timeInCycle = elapsed.truncatingRemainder(
+            dividingBy: cycleDuration
+        )
+
+        observationIndex = currentIndex
+
+        if timeInCycle < stepDuration {
+            observationPosition = sequence[currentIndex]
+        } else {
+            observationPosition = .unknown
+        }
+    }
 
             private func skipPuzzle() {
                 PuzzleProgress.markDiscovered(3)
@@ -487,7 +611,21 @@ struct FaceTrackingView: View {
                 UIImpactFeedbackGenerator(style: style).impactOccurred()
             }
         }
-        
-#Preview {
-    FaceTrackingView()
+
+private enum Phase {
+    case ready
+    case calibrating
+    case observing
+    case preparing
+    case reconstructing
+    case completed
 }
+
+private enum HeadPosition: Equatable {
+    case left
+    case center
+    case right
+    case unknown
+}
+
+        
