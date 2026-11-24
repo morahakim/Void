@@ -142,10 +142,10 @@ struct PuzzleHeader: View {
 
             Spacer()
 
-            Text(String(format: "%03d / %03d", number, VoidMetrics.puzzleCount))
+            Text(String(format: "%03d / %03d", number, PuzzleProgress.totalCount))
                 .voidText(.label)
                 .foregroundStyle(VoidTheme.secondary)
-                .accessibilityLabel("Puzzle \(number) of \(VoidMetrics.puzzleCount)")
+                .accessibilityLabel("Puzzle \(number) of \(PuzzleProgress.totalCount)")
         }
     }
 }

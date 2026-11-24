@@ -31,13 +31,14 @@ struct PuzzleView: View {
     @State private var showReverseSymbol = false
     @State private var targetPulse = false
     @State private var completionScale: CGFloat = 0.7
-    @State private var completionOpacity: Double = 0
 
     private let targetSize: CGFloat = 46
     private let ballSize: CGFloat = 18
     private let movementRange: CGFloat = 115
     private let holdDuration: Double = 3
     private let requiredReverseSamples = 10
+    private let mediumFeedback = UIImpactFeedbackGenerator(style: .medium)
+    private let successFeedback = UINotificationFeedbackGenerator()
 
     var body: some View {
         ZStack {
@@ -400,7 +401,6 @@ struct PuzzleView: View {
                 withAnimation(.spring(response: 0.6, dampingFraction: 0.65)) {
                     targetPulse = true
                     completionScale = 1.15
-                    completionOpacity = 1
                 }
 
                 provideSuccessFeedback()
@@ -417,30 +417,18 @@ struct PuzzleView: View {
         let newX = CGFloat(x) * sensitivity
         let newY = 85 - CGFloat(y) * sensitivity
 
-        let limitedX = min(
-            max(newX, -movementRange),
-            movementRange
-        )
-
-        let limitedY = min(
-            max(newY, -movementRange),
-            movementRange
-        )
-
         ballPosition = CGPoint(
-            x: limitedX,
-            y: limitedY
+            x: min(max(newX, -movementRange), movementRange),
+            y: min(max(newY, -movementRange), movementRange)
         )
     }
 
     private func provideFeedback() {
-        let generator = UIImpactFeedbackGenerator(style: .medium)
-        generator.impactOccurred()
+        mediumFeedback.impactOccurred()
     }
 
     private func provideSuccessFeedback() {
-        let generator = UINotificationFeedbackGenerator()
-        generator.notificationOccurred(.success)
+        successFeedback.notificationOccurred(.success)
     }
 
     private func restartPuzzle() {
@@ -458,7 +446,6 @@ struct PuzzleView: View {
         targetPulse = false
 
         completionScale = 0.7
-        completionOpacity = 0
 
         motion.startUpdates()
     }

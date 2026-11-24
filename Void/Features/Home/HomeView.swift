@@ -61,14 +61,14 @@ struct HomeView: View {
                     String(
                         format: "%02d / %02d PUZZLES DISCOVERED",
                         discoveredCount,
-                        VoidMetrics.puzzleCount
+                        PuzzleProgress.totalCount
                     )
                 )
                 .voidText(.label)
                 .foregroundStyle(VoidTheme.secondary)
                 .padding(.top, 20)
                 .accessibilityLabel(
-                    "\(discoveredCount) of \(VoidMetrics.puzzleCount) puzzles discovered"
+                    "\(discoveredCount) of \(PuzzleProgress.totalCount) puzzles discovered"
                 )
             }
             .voidScreen()

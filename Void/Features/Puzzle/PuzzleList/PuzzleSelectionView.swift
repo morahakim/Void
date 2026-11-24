@@ -10,22 +10,11 @@ import SwiftUI
 struct PuzzleSelectionView: View {
     @Environment(\.dismiss) private var dismiss
 
-    @AppStorage("gravityDiscovered")
-    private var gravityDiscovered = false
-
-    @AppStorage("puzzle002Discovered")
-    private var puzzle002Discovered = false
-
-    @AppStorage("puzzle003Discovered")
-    private var puzzle003Discovered = false
-
-    @AppStorage("puzzle004Discovered")
-    private var puzzle004Discovered = false
-
-    @AppStorage("puzzle005Discovered")
-    private var puzzle005Discovered = false
-
     @State private var selectedPuzzle: PuzzleDefinition?
+    
+    private var totalPuzzles: Int {
+        PuzzleProgress.totalCount
+    }
 
     var body: some View {
         ZStack {
@@ -53,7 +42,7 @@ struct PuzzleSelectionView: View {
                     HStack {
                         Text("DISCOVERY PROGRESS")
                         Spacer()
-                        Text("\(discoveredCount) / 05")
+                        Text("\(discoveredCount) / \(String(format: "%02d", totalPuzzles))")
                             .monospacedDigit()
                     }
                     .font(.system(size: 9, weight: .medium))
@@ -69,7 +58,7 @@ struct PuzzleSelectionView: View {
                                 .fill(VoidTheme.accent)
                                 .frame(
                                     width: geometry.size.width *
-                                    CGFloat(discoveredCount) / 5
+                                    CGFloat(discoveredCount) / CGFloat(totalPuzzles)
                                 )
                         }
                     }
@@ -92,7 +81,7 @@ struct PuzzleSelectionView: View {
 
                 Spacer()
 
-                Text("\(String(format: "%02d", discoveredCount)) — 05")
+                Text("\(String(format: "%02d", discoveredCount)) — \(String(format: "%02d", totalPuzzles))")
                     .font(.system(size: 10, weight: .medium))
                     .tracking(2)
                     .foregroundStyle(VoidTheme.secondary)
@@ -122,33 +111,17 @@ struct PuzzleSelectionView: View {
                 .foregroundStyle(VoidTheme.secondary)
         }
     }
-
-    // MARK: - Progression
-
-    private func isDiscovered(_ index: Int) -> Bool {
-        switch index {
-        case 1: return gravityDiscovered
-        case 2: return puzzle002Discovered
-        case 3: return puzzle003Discovered
-        case 4: return puzzle004Discovered
-        case 5: return puzzle005Discovered
-        default: return false
-        }
-    }
-
-    private func isUnlocked(_ index: Int) -> Bool {
-        PuzzleProgress.isUnlocked(index)
-    }
-
+    
     private var discoveredCount: Int {
-        (1...5).filter { isDiscovered($0) }.count
+        PuzzleProgress.discoveredCount
     }
 
     // MARK: - Puzzle Row
 
     private func puzzleRow(puzzle: PuzzleDefinition) -> some View {
-        let discovered = isDiscovered(puzzle.id)
-        let unlocked = isUnlocked(puzzle.id)
+        let discovered = PuzzleProgress.isDiscovered(puzzle.id)
+        let unlocked = PuzzleProgress.isUnlocked(puzzle.id)
+        let isPlayable = unlocked && puzzle.isImplemented
 
         let status = discovered
             ? "DISCOVERED"
@@ -157,7 +130,7 @@ struct PuzzleSelectionView: View {
                 : "LOCKED"
 
         return Button {
-                guard unlocked && puzzle.isImplemented else { return }
+            guard isPlayable else { return }
 
                 selectedPuzzle = puzzle
         } label: {
@@ -205,7 +178,7 @@ struct PuzzleSelectionView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(!unlocked || !puzzle.isImplemented)
+        .disabled(!isPlayable)
     }
 
 }

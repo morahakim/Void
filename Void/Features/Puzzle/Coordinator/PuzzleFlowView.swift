@@ -11,12 +11,9 @@ struct PuzzleFlowView: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    let initialPuzzleID: Int
-
     @State private var currentPuzzleID: Int
 
     init(initialPuzzleID: Int) {
-        self.initialPuzzleID = initialPuzzleID
         _currentPuzzleID = State(initialValue: initialPuzzleID)
     }
 

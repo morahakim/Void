@@ -9,8 +9,6 @@ import Foundation
 
 enum PuzzleProgress {
     
-    static let totalCount = 5
-    
     private static func key(for puzzleID: Int) -> String {
         switch puzzleID {
         case 1: return "gravityDiscovered"
@@ -18,23 +16,39 @@ enum PuzzleProgress {
         case 3: return "puzzle003Discovered"
         case 4: return "puzzle004Discovered"
         case 5: return "puzzle005Discovered"
-        default: return "unknownPuzzle"
+        default: return "puzzle\(String(format: "%03d", puzzleID))Discovered"
         }
     }
     
+    static var totalCount: Int {
+        PuzzleDefinition.all.count
+    }
+    
     static var discoveredCount: Int {
-        (1...totalCount).filter(isDiscovered).count
+        PuzzleDefinition.all.filter {
+            isDiscovered($0.id)
+        }.count
     }
     
     static func isDiscovered(_ puzzleID: Int) -> Bool {
-        UserDefaults.standard.bool(
+        guard PuzzleDefinition.all.contains(where: {
+            $0.id == puzzleID
+        }) else {
+            return false
+        }
+
+        return UserDefaults.standard.bool(
             forKey: key(for: puzzleID)
         )
     }
     
     static func markDiscovered(_ puzzleID: Int) {
-        guard (1...totalCount).contains(puzzleID) else { return }
-        
+        guard PuzzleDefinition.all.contains(where: {
+            $0.id == puzzleID
+        }) else {
+            return
+        }
+
         UserDefaults.standard.set(
             true,
             forKey: key(for: puzzleID)
@@ -42,12 +56,16 @@ enum PuzzleProgress {
     }
     
     static func isUnlocked(_ puzzleID: Int) -> Bool {
-        guard (1...totalCount).contains(puzzleID) else { return false }
-        
-        if puzzleID == 1 {
+        guard let puzzle = PuzzleDefinition.all.first(where: {
+            $0.id == puzzleID
+        }) else {
+            return false
+        }
+
+        if puzzle.id == 1 {
             return true
         }
-        
-        return isDiscovered(puzzleID - 1)
+
+        return isDiscovered(puzzle.id - 1)
     }
 }

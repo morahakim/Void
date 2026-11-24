@@ -8,9 +8,7 @@
 import Foundation
 
 enum PuzzleCoordinator {
-
-    static let totalPuzzles = 5
-
+    
     // Find the next puzzle that is unlocked and implemented.
     static func nextPuzzle(after currentID: Int) -> PuzzleDefinition? {
         let nextID = currentID + 1
@@ -27,14 +25,6 @@ enum PuzzleCoordinator {
         }
 
         return puzzle
-    }
-
-    // Check whether the current puzzle is the final puzzle.
-    static func isLastPuzzle(_ puzzleID: Int) -> Bool {
-        !PuzzleDefinition.all.contains { puzzle in
-            puzzle.id > puzzleID &&
-            puzzle.isImplemented
-        }
     }
 
     // Get the next puzzle ID.

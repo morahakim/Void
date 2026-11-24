@@ -17,44 +17,31 @@ struct FaceTrackingView: View {
     
     var onContinue: () -> Void = { }
     
-    
     @State private var phase: Phase = .ready
     @State private var faceSince: Date?
     @State private var neutralYaw: Float?
     @State private var yawSamples: [Float] = []
-    @State private var closedSince: Date?
-    @State private var lastClosedAt: Date?
-    @State private var countedSeconds = 0
-    @State private var closeProgress: Double = 0
+    
     @State private var hintLevel = 0
     @State private var allHintsRevealedAt: Date?
     @State private var skipAvailable = false
-    @State private var headPosition: HeadPosition = .unknown
-    @State private var hasLeftCenter = false
+    
+    @State private var sequenceIndex = 0
+    @State private var observationIndex = 0
+    @State private var observationPosition: HeadPosition = .unknown
+    @State private var observationStartedAt: Date?
+    @State private var preparingSince: Date?
+    @State private var lastDetectedPosition: HeadPosition = .center
+    
     @State private var sequence: [HeadPosition] = [
         .left,
         .right,
         .center,
         .left
     ]
-
-    @State private var sequenceIndex = 0
-    @State private var observationIndex = 0
-    @State private var observationPosition: HeadPosition = .unknown
-    @State private var observationStartedAt: Date? = nil
-    @State private var isWaitingForCenter = false
-    @State private var lastAcceptedPosition: HeadPosition = .center
-    @State private var preparingSince: Date? = nil
-    @State private var lastDetectedPosition: HeadPosition = .center
-    @State private var hasRegisteredMovement = false
     
     private let faceDuration = 1.0
-    private let closeDuration = 5.0
-    private let gracePeriod = 0.3
     private let skipDelay = 60.0
-    
-    private let lightFeedback = UIImpactFeedbackGenerator(style: .light)
-    private let mediumFeedback = UIImpactFeedbackGenerator(style: .medium)
     private let successFeedback = UINotificationFeedbackGenerator()
     
     private let faceHints = [
@@ -96,9 +83,9 @@ struct FaceTrackingView: View {
                 visual.padding(.top, 16)
                 completionMessage
                     .padding(.horizontal, 28)
-
+                
                 Spacer(minLength: 24)
-
+                
                 actionSection
             }
             .voidScreen()
@@ -107,39 +94,37 @@ struct FaceTrackingView: View {
                 .opacity(0)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
-                .animation(.linear(duration: 0.2), value: closeProgress)
-                .animation(.easeInOut(duration: 0.6), value: phase)
-                }
-                .onChange(of: face.isRunning) { _, running in
-                    guard running, phase == .ready else { return }
-                    phase = .calibrating
-                }
-                .onChange(of: phase) { _, _ in
-                    // Each phase has its own hints; start each one fresh.
-                    hintLevel = 0
-                }
-                .onChange(of: hintLevel) { _, level in
-                    allHintsRevealedAt = level >= currentHints.count ? Date() : nil
-                    skipAvailable = false
-                }
-                .onChange(of: scenePhase) { _, newPhase in
-                    if newPhase == .active {
-                        face.refreshAuthorization()
-                    }
-                }
-                .onReceive(timer) { _ in
-                    evaluate()
-                }
-                .onDisappear {
-                    face.stop()
-                }
+        }
+        .onChange(of: face.isRunning) { _, running in
+            guard running, phase == .ready else { return }
+            phase = .calibrating
+        }
+        .onChange(of: phase) { _, _ in
+            // Each phase has its own hints; start each one fresh.
+            hintLevel = 0
+        }
+        .onChange(of: hintLevel) { _, level in
+            allHintsRevealedAt = level >= currentHints.count ? Date() : nil
+            skipAvailable = false
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                face.refreshAuthorization()
             }
-
-            // MARK: - Sections
-
+        }
+        .onReceive(timer) { _ in
+            evaluate()
+        }
+        .onDisappear {
+            face.stop()
+        }
+    }
+    
+    // MARK: - Sections
+    
     private var visual: some View {
         let positions: [HeadPosition] = [.left, .center, .right]
-
+        
         return VStack(spacing: 28) {
             HStack(spacing: 24) {
                 ForEach(Array(positions.enumerated()), id: \.offset) { index, position in
@@ -153,8 +138,8 @@ struct FaceTrackingView: View {
                                 Circle()
                                     .fill(
                                         observationPosition == position
-                                            ? VoidTheme.accent.opacity(0.25)
-                                            : .clear
+                                        ? VoidTheme.accent.opacity(0.25)
+                                        : .clear
                                     )
                             }
                             .frame(width: 54, height: 54)
@@ -163,7 +148,7 @@ struct FaceTrackingView: View {
                                     .fill(VoidTheme.accent)
                                     .frame(width: 7, height: 7)
                             }
-
+                        
                         Text(["LEFT", "CENTER", "RIGHT"][index])
                             .font(.system(size: 9, design: .monospaced))
                             .tracking(1)
@@ -171,29 +156,29 @@ struct FaceTrackingView: View {
                     }
                 }
             }
-
+            
             if phase == .observing {
                 HStack(spacing: 12) {
                     ForEach(sequence.indices, id: \.self) { index in
                         RoundedRectangle(cornerRadius: 2)
                             .fill(
                                 index == observationIndex
-                                    ? VoidTheme.accent
-                                    : VoidTheme.secondary.opacity(0.25)
+                                ? VoidTheme.accent
+                                : VoidTheme.secondary.opacity(0.25)
                             )
                             .frame(width: 28, height: 3)
                     }
                 }
             }
-
+            
             if phase == .reconstructing {
                 HStack(spacing: 14) {
                     ForEach(sequence.indices, id: \.self) { index in
                         Circle()
                             .fill(
                                 index < sequenceIndex
-                                    ? VoidColor.success
-                                    : VoidTheme.secondary.opacity(0.25)
+                                ? VoidColor.success
+                                : VoidTheme.secondary.opacity(0.25)
                             )
                             .frame(
                                 width: index < sequenceIndex ? 11 : 7,
@@ -201,8 +186,8 @@ struct FaceTrackingView: View {
                             )
                             .shadow(
                                 color: index < sequenceIndex
-                                    ? VoidColor.success.opacity(0.5)
-                                    : .clear,
+                                ? VoidColor.success.opacity(0.5)
+                                : .clear,
                                 radius: 8
                             )
                             .animation(
@@ -217,31 +202,29 @@ struct FaceTrackingView: View {
         .animation(.easeInOut(duration: 0.2), value: observationIndex)
         .accessibilityHidden(true)
     }
-
+    
     private func evaluatePreparing(now: Date) {
         guard face.isFaceDetected else {
             preparingSince = nil
             return
         }
-
+        
         guard face.eyesClosed else {
             preparingSince = nil
             return
         }
-
+        
         if preparingSince == nil {
             preparingSince = now
             return
         }
-
+        
         guard let preparingSince else { return }
-
+        
         if now.timeIntervalSince(preparingSince) >= 1.0 {
             self.preparingSince = nil
             sequenceIndex = 0
-            isWaitingForCenter = false
             lastDetectedPosition = .center
-            hasRegisteredMovement = false
             phase = .reconstructing
             impact(.light)
         }
@@ -249,36 +232,40 @@ struct FaceTrackingView: View {
     
     private func evaluateReconstruction() {
         guard face.isFaceDetected else { return }
-
+        
+        // Gerakan hanya dihitung ketika kedua mata tertutup.
         guard face.eyesClosed else {
             lastDetectedPosition = detectHeadPosition()
             return
         }
-
+        
         let currentPosition = detectHeadPosition()
-
+        
+        // Abaikan posisi yang belum terdeteksi atau belum berubah.
         guard currentPosition != .unknown,
               currentPosition != lastDetectedPosition else {
             return
         }
-
+        
         lastDetectedPosition = currentPosition
-
+        
         guard sequenceIndex < sequence.count else { return }
-
+        
+        // Center hanya diterima ketika memang menjadi target.
         if currentPosition == .center,
            sequence[sequenceIndex] != .center {
             return
         }
-
+        
         if currentPosition == sequence[sequenceIndex] {
             sequenceIndex += 1
             impact(.light)
-            if sequenceIndex >= sequence.count {
+            
+            if sequenceIndex == sequence.count {
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
                     phase = .completed
                 }
-
+                
                 successFeedback.notificationOccurred(.success)
             }
         } else {
@@ -286,101 +273,103 @@ struct FaceTrackingView: View {
             impact(.light)
         }
     }
-            private var statusSection: some View {
-                VStack(spacing: 8) {
-                    Text(statusText)
-                        .voidText(.status)
-                        .foregroundStyle(
-                            phase == .completed
-                                ? VoidColor.success
-                                : VoidTheme.secondary
-                        )
+    private var statusSection: some View {
+        VStack(spacing: 8) {
+            Text(statusText)
+                .voidText(.status)
+                .foregroundStyle(
+                    phase == .completed
+                    ? VoidColor.success
+                    : VoidTheme.secondary
+                )
+            
+            if let unavailableText {
+                Text(unavailableText)
+                    .font(.footnote)
+                    .foregroundStyle(VoidColor.error)
+                
+            } else if let revealedHint {
+                Text(revealedHint)
+                    .voidText(.body)
+                    .foregroundStyle(.white)
+                    .id(hintLevel)
+                    .transition(.opacity)
+                    .accessibilityLabel(
+                        "Hint \(hintLevel) of \(currentHints.count). \(revealedHint)"
+                    )
+                
+            } else if phase == .ready {
+                Text("USES THE FRONT CAMERA · NOTHING IS SAVED")
+                    .voidText(.label)
+                    .foregroundStyle(VoidTheme.secondary)
+                
+            } else if let primaryText {
+                Text(primaryText)
+                    .voidText(.body)
+                    .foregroundStyle(VoidTheme.secondary)
+            }
+        }
+        .multilineTextAlignment(.center)
+        .accessibilityElement(children: .combine)
+    }
+    
+    /// Reserves the button's height in every phase so the layout never jumps.
+    private var actionSection: some View {
+        ZStack {
+            if face.availability == .unsupported {
+                Button("CONTINUE") {
+                    PuzzleProgress.markDiscovered(3)
+                    onContinue()
+                }
+                .buttonStyle(VoidPrimaryButtonStyle())
 
-                    if let unavailableText {
-                        Text(unavailableText)
-                            .font(.footnote)
-                            .foregroundStyle(VoidColor.error)
-                    } else if let revealedHint {
-                        Text(revealedHint)
-                            .voidText(.body)
-                            .foregroundStyle(.white)
-                            .id(hintLevel)
-                            .transition(.opacity)
-                            .accessibilityLabel(
-                                "Hint \(hintLevel) of \(currentHints.count). \(revealedHint)"
+            } else if face.availability == .denied {
+                Button("OPEN SETTINGS") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                }
+                .buttonStyle(VoidPrimaryButtonStyle())
+
+            } else {
+                switch phase {
+                case .ready:
+                    Button("BEGIN") {
+                        face.requestPermissionAccess()
+                    }
+                    .buttonStyle(VoidPrimaryButtonStyle())
+
+                case .completed:
+                    Button("CONTINUE") {
+                        face.stop()
+                        onContinue()
+                    }
+                    .buttonStyle(VoidPrimaryButtonStyle())
+
+                case .calibrating, .observing, .preparing, .reconstructing:
+                    HStack(spacing: 8) {
+                        if hintLevel < currentHints.count {
+                            PuzzleHintButton(
+                                level: $hintLevel,
+                                count: currentHints.count
                             )
-                    } else if phase == .ready {
-                        // HIG: explain why before the system permission prompt appears.
-                        Text("USES THE FRONT CAMERA · NOTHING IS SAVED")
-                            .voidText(.label)
-                            .foregroundStyle(VoidTheme.secondary)
-                    } else if let primaryText {
-                        Text(primaryText)
-                            .voidText(.body)
-                            .foregroundStyle(VoidTheme.secondary)
-                    }
-                }
-                .multilineTextAlignment(.center)
-                .accessibilityElement(children: .combine)
-            }
-
-            /// Reserves the button's height in every phase so the layout never jumps.
-            private var actionSection: some View {
-                ZStack {
-                    if face.availability == .unsupported {
-                        Button("CONTINUE") {
-                            // No TrueDepth camera: let the player through,
-                            // or puzzles 4 and 5 stay locked forever.
-                            PuzzleProgress.markDiscovered(3)
-                            onContinue()
                         }
-                        .buttonStyle(VoidPrimaryButtonStyle())
-                    } else if face.availability == .denied {
-                        Button("OPEN SETTINGS") {
-                            if let url = URL(string: UIApplication.openSettingsURLString) {
-                                UIApplication.shared.open(url)
-                            }
-                        }
-                        .buttonStyle(VoidPrimaryButtonStyle())
-                    } else {
-                        switch phase {
-                        case .ready:
-                            Button("BEGIN") {
-                                face.requestPermissionAccess()
-                            }
-                            .buttonStyle(VoidPrimaryButtonStyle())
 
-                        case .completed:
-                            Button("CONTINUE") {
-                                face.stop()
-                                onContinue()
+                        if skipAvailable {
+                            Button("SKIP") {
+                                skipPuzzle()
                             }
-                            .buttonStyle(VoidPrimaryButtonStyle())
-
-                        case .calibrating, .observing, .preparing, .reconstructing:
-                            HStack(spacing: 8) {
-                                if hintLevel < currentHints.count {
-                                    PuzzleHintButton(
-                                        level: $hintLevel,
-                                        count: currentHints.count
-                                    )
-                                }
-
-                                if skipAvailable {
-                                    Button("SKIP") {
-                                        skipPuzzle()
-                                    }
-                                    .buttonStyle(VoidSecondaryButtonStyle())
-                                    .transition(.opacity)
-                                }
-                            }
+                            .buttonStyle(VoidSecondaryButtonStyle())
+                            .transition(.opacity)
                         }
                     }
                 }
-                .frame(height: VoidMetrics.primaryButtonHeight)
-                .animation(.easeInOut(duration: 0.3), value: skipAvailable)
-                .animation(.easeInOut(duration: 0.3), value: hintLevel)
             }
+        }
+        .frame(height: VoidMetrics.primaryButtonHeight)
+        .animation(.easeInOut(duration: 0.3), value: skipAvailable)
+        .animation(.easeInOut(duration: 0.3), value: hintLevel)
+    }
     
     private var completionMessage: some View {
         VStack(spacing: 12) {
@@ -388,13 +377,13 @@ struct FaceTrackingView: View {
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .tracking(4)
                 .foregroundStyle(VoidTheme.secondary)
-
+            
             Text("WHAT YOU COULDN'T SEE.")
                 .font(.system(size: 19, weight: .light))
                 .tracking(2)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(VoidTheme.primary)
-
+            
             Text("SOME THINGS ARE ONLY FOUND WHEN YOU STOP LOOKING.")
                 .font(.system(size: 9, weight: .regular, design: .monospaced))
                 .tracking(1.5)
@@ -406,12 +395,14 @@ struct FaceTrackingView: View {
         .offset(y: phase == .completed ? 0 : 12)
         .animation(.easeOut(duration: 1.0).delay(0.3), value: phase)
     }
-
-            // MARK: - Derived State
-
-            private var isEyeOpen: Bool {
-                face.isRunning && face.isFaceDetected
-            }
+    
+    // MARK: - Derived State
+    
+    private var isEyeOpen: Bool {
+        face.isRunning && face.isFaceDetected
+    }
+    
+    // MARK: - Derived State
 
     private var currentHints: [String] {
         [
@@ -449,16 +440,16 @@ struct FaceTrackingView: View {
         }
     }
 
-            private var unavailableText: String? {
-                switch face.availability {
-                case .unsupported:
-                    return "This puzzle needs a Face ID camera."
-                case .denied:
-                    return "Allow camera access in Settings to play."
-                case .unknown, .ready:
-                    return nil
-                }
-            }
+    private var unavailableText: String? {
+        switch face.availability {
+        case .unsupported:
+            return "This puzzle needs a Face ID camera."
+        case .denied:
+            return "Allow camera access in Settings to play."
+        case .unknown, .ready:
+            return nil
+        }
+    }
 
     private var statusText: String {
         switch face.availability {
@@ -485,9 +476,8 @@ struct FaceTrackingView: View {
             return "FOUND IT."
         }
     }
-
-            // MARK: - Puzzle Logic
     
+    // MARK: - Puzzle Logic
     private func detectHeadPosition() -> HeadPosition {
         guard let neutralYaw else { return .unknown }
 
@@ -500,32 +490,32 @@ struct FaceTrackingView: View {
         return .unknown
     }
 
-            private func evaluate() {
-                let now = Date()
+    private func evaluate() {
+        let now = Date()
 
-                if let allHintsRevealedAt,
-                   !skipAvailable,
-                   now.timeIntervalSince(allHintsRevealedAt) >= skipDelay {
-                    skipAvailable = true
-                }
+        if let allHintsRevealedAt,
+           !skipAvailable,
+           now.timeIntervalSince(allHintsRevealedAt) >= skipDelay {
+            skipAvailable = true
+        }
 
-                switch phase {
-                case .calibrating:
-                    evaluateFace(now: now)
+        switch phase {
+        case .calibrating:
+            evaluateFace(now: now)
 
-                case .observing:
-                    evaluateObservation(now: now)
+        case .observing:
+            evaluateObservation(now: now)
 
-                case .preparing:
-                    evaluatePreparing(now: now)
+        case .preparing:
+            evaluatePreparing(now: now)
 
-                case .reconstructing:
-                    evaluateReconstruction()
+        case .reconstructing:
+            evaluateReconstruction()
 
-                case .ready, .completed:
-                    break
-                }
-            }
+        case .ready, .completed:
+            break
+        }
+    }
 
     private func evaluateFace(now: Date) {
         guard face.isFaceDetected else {
@@ -541,27 +531,27 @@ struct FaceTrackingView: View {
 
         yawSamples.append(face.headYaw)
 
-        if let faceSince,
-           now.timeIntervalSince(faceSince) >= faceDuration {
-
-            guard !yawSamples.isEmpty else { return }
-
-            neutralYaw = yawSamples.reduce(0, +) / Float(yawSamples.count)
-
-            self.faceSince = nil
-            yawSamples.removeAll()
-
-            observationStartedAt = Date()
-            observationIndex = 0
-            observationPosition = sequence[0]
-
-            phase = .observing
-            impact(.light)
-
-            print("UNSEEN CALIBRATION: \(neutralYaw ?? 0)")
+        guard let faceSince,
+              now.timeIntervalSince(faceSince) >= faceDuration,
+              !yawSamples.isEmpty else {
+            return
         }
+
+        neutralYaw = yawSamples.reduce(0, +) / Float(yawSamples.count)
+
+        self.faceSince = nil
+        yawSamples.removeAll()
+
+        observationStartedAt = now
+        observationIndex = 0
+        observationPosition = sequence[0]
+
+        phase = .observing
+        impact(.light)
+
+        print("UNSEEN CALIBRATION: \(neutralYaw ?? 0)")
     }
-    
+
     private func evaluateObservation(now: Date) {
         guard let startTime = observationStartedAt else {
             observationStartedAt = now
@@ -570,8 +560,6 @@ struct FaceTrackingView: View {
             return
         }
 
-        let elapsed = now.timeIntervalSince(startTime)
-
         let stepDuration = 0.8
         let gapDuration = 0.3
         let cycleDuration = stepDuration + gapDuration
@@ -579,7 +567,9 @@ struct FaceTrackingView: View {
         let totalDuration =
             Double(sequence.count - 1) * cycleDuration + stepDuration
 
-        if elapsed >= totalDuration {
+        let elapsed = now.timeIntervalSince(startTime)
+
+        guard elapsed < totalDuration else {
             observationPosition = .unknown
             observationStartedAt = nil
             phase = .preparing
@@ -593,24 +583,21 @@ struct FaceTrackingView: View {
         )
 
         observationIndex = currentIndex
-
-        if timeInCycle < stepDuration {
-            observationPosition = sequence[currentIndex]
-        } else {
-            observationPosition = .unknown
-        }
+        observationPosition = timeInCycle < stepDuration
+            ? sequence[currentIndex]
+            : .unknown
     }
 
-            private func skipPuzzle() {
-                PuzzleProgress.markDiscovered(3)
-                face.stop()
-                onContinue()
-            }
+    private func skipPuzzle() {
+        PuzzleProgress.markDiscovered(3)
+        face.stop()
+        onContinue()
+    }
 
-            private func impact(_ style: UIImpactFeedbackGenerator.FeedbackStyle) {
-                UIImpactFeedbackGenerator(style: style).impactOccurred()
-            }
-        }
+    private func impact(_ style: UIImpactFeedbackGenerator.FeedbackStyle) {
+        UIImpactFeedbackGenerator(style: style).impactOccurred()
+    }
+}
 
 private enum Phase {
     case ready
@@ -628,4 +615,3 @@ private enum HeadPosition: Equatable {
     case unknown
 }
 
-        
