@@ -394,7 +394,7 @@ struct ResonanceView: View {
                     if hintAvailable && hintLevel < hints.count {
                         PuzzleHintButton(
                             level: $hintLevel,
-                            count: hints.count
+                            count: hints.count, isAvailable: false
                         )
                     }
 

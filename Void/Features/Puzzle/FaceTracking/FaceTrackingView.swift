@@ -32,6 +32,12 @@ struct FaceTrackingView: View {
     @State private var observationStartedAt: Date?
     @State private var preparingSince: Date?
     @State private var lastDetectedPosition: HeadPosition = .center
+    @State private var eyeClosing = false
+    @State private var hintAvailable = false
+    @State private var gameplayStartedAt: Date?
+    
+    @State private var firstHintUnlocked = false
+    @State private var hintUnlockAt: Date?
     
     @State private var sequence: [HeadPosition] = [
         .left,
@@ -74,12 +80,21 @@ struct FaceTrackingView: View {
                     dismiss()
                 }
                 
-                PuzzleTitle(title: "UNSEEN", subtitle: "SOME THINGS ONLY APPEAR IN THE DARK")
-                    .padding(.top, VoidMetrics.titleTopSpacing)
-                
+                    if phase == .ready {
+                        PuzzleTitle(
+                            title: "UNSEEN",
+                            subtitle: "SOME THINGS ONLY APPEAR IN THE DARK"
+                        )
+                        .padding(.top, VoidMetrics.titleTopSpacing)
+                        .transition(.opacity)
+                    }
+            
                 Spacer(minLength: 16)
                 
-                statusSection
+                if phase != .ready {
+                    statusSection
+                }
+                
                 visual.padding(.top, 16)
                 completionMessage
                     .padding(.horizontal, 28)
@@ -89,6 +104,10 @@ struct FaceTrackingView: View {
                 actionSection
             }
             .voidScreen()
+            .animation(
+                .easeInOut(duration: 0.3),
+                value: phase == .ready
+            )
             
             Color.black
                 .opacity(0)
@@ -99,13 +118,30 @@ struct FaceTrackingView: View {
             guard running, phase == .ready else { return }
             phase = .calibrating
         }
-        .onChange(of: phase) { _, _ in
-            // Each phase has its own hints; start each one fresh.
+        .onChange(of: phase) { oldPhase, newPhase in
             hintLevel = 0
+
+            if oldPhase == .ready && newPhase == .calibrating {
+                gameplayStartedAt = Date()
+                hintAvailable = false
+            }
         }
         .onChange(of: hintLevel) { _, level in
             allHintsRevealedAt = level >= currentHints.count ? Date() : nil
             skipAvailable = false
+
+            guard level > 0 else { return }
+
+            if level >= currentHints.count {
+                hintAvailable = false
+                hintUnlockAt = nil
+                return
+            }
+
+            hintAvailable = false
+
+            let delay: TimeInterval = level == 1 ? 20 : 30
+            hintUnlockAt = Date().addingTimeInterval(delay)
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
@@ -118,46 +154,75 @@ struct FaceTrackingView: View {
         .onDisappear {
             face.stop()
         }
+        .task(id: gameplayStartedAt) {
+            guard gameplayStartedAt != nil else { return }
+
+            try? await Task.sleep(for: .seconds(120))
+
+            guard !Task.isCancelled else { return }
+
+            firstHintUnlocked = true
+
+            withAnimation(.easeInOut(duration: 0.3)) {
+                hintAvailable = true
+            }
+        }
+        .task(id: hintUnlockAt) {
+            guard let unlockAt = hintUnlockAt else { return }
+
+            let remaining = max(0, unlockAt.timeIntervalSinceNow)
+
+            try? await Task.sleep(for: .seconds(remaining))
+
+            guard !Task.isCancelled else { return }
+
+            withAnimation(.easeInOut(duration: 0.3)) {
+                hintAvailable = true
+            }
+
+            hintUnlockAt = nil
+        }
     }
     
     // MARK: - Sections
     
     private var visual: some View {
         let positions: [HeadPosition] = [.left, .center, .right]
-        
+
         return VStack(spacing: 28) {
-            HStack(spacing: 24) {
-                ForEach(Array(positions.enumerated()), id: \.offset) { index, position in
-                    VStack(spacing: 12) {
-                        Circle()
-                            .stroke(
-                                VoidTheme.accent.opacity(0.6),
-                                lineWidth: 1
-                            )
-                            .background {
-                                Circle()
-                                    .fill(
-                                        observationPosition == position
-                                        ? VoidTheme.accent.opacity(0.25)
-                                        : .clear
-                                    )
-                            }
-                            .frame(width: 54, height: 54)
-                            .overlay {
-                                Circle()
-                                    .fill(VoidTheme.accent)
-                                    .frame(width: 7, height: 7)
-                            }
-                        
-                        Text(["LEFT", "CENTER", "RIGHT"][index])
-                            .font(.system(size: 9, design: .monospaced))
-                            .tracking(1)
-                            .foregroundStyle(VoidTheme.secondary)
+            switch phase {
+            case .observing:
+                HStack(spacing: 24) {
+                    ForEach(Array(positions.enumerated()), id: \.offset) { index, position in
+                        VStack(spacing: 12) {
+                            Circle()
+                                .stroke(
+                                    VoidTheme.accent.opacity(0.6),
+                                    lineWidth: 1
+                                )
+                                .background {
+                                    Circle()
+                                        .fill(
+                                            observationPosition == position
+                                            ? VoidTheme.accent.opacity(0.25)
+                                            : .clear
+                                        )
+                                }
+                                .frame(width: 54, height: 54)
+                                .overlay {
+                                    Circle()
+                                        .fill(VoidTheme.accent)
+                                        .frame(width: 7, height: 7)
+                                }
+
+                            Text(["LEFT", "CENTER", "RIGHT"][index])
+                                .font(.system(size: 9, design: .monospaced))
+                                .tracking(1)
+                                .foregroundStyle(VoidTheme.secondary)
+                        }
                     }
                 }
-            }
-            
-            if phase == .observing {
+
                 HStack(spacing: 12) {
                     ForEach(sequence.indices, id: \.self) { index in
                         RoundedRectangle(cornerRadius: 2)
@@ -169,9 +234,27 @@ struct FaceTrackingView: View {
                             .frame(width: 28, height: 3)
                     }
                 }
-            }
-            
-            if phase == .reconstructing {
+
+            case .preparing:
+                ZStack {
+                    Image(systemName: "eye")
+                        .font(.system(size: 58, weight: .ultraLight))
+                        .foregroundStyle(VoidTheme.accent)
+                        .scaleEffect(
+                            x: 1,
+                            y: eyeClosing ? 0.3 : 1
+                        )
+                        .opacity(eyeClosing ? 0 : 1)
+                        .blur(radius: eyeClosing ? 3 : 0)
+                        .animation(
+                            .easeInOut(duration: 2.5),
+                            value: eyeClosing
+                        )
+                }
+                .frame(width: 80, height: 80)
+                .animation(.easeInOut(duration: 2.5), value: eyeClosing)
+
+            case .reconstructing:
                 HStack(spacing: 14) {
                     ForEach(sequence.indices, id: \.self) { index in
                         Circle()
@@ -190,18 +273,18 @@ struct FaceTrackingView: View {
                                 : .clear,
                                 radius: 8
                             )
-                            .animation(
-                                .spring(response: 0.35, dampingFraction: 0.6),
-                                value: sequenceIndex
-                            )
                     }
                 }
+
+            default:
+                EmptyView()
             }
         }
         .frame(height: 280)
         .animation(.easeInOut(duration: 0.2), value: observationIndex)
         .accessibilityHidden(true)
     }
+
     
     private func evaluatePreparing(now: Date) {
         guard face.isFaceDetected else {
@@ -298,11 +381,6 @@ struct FaceTrackingView: View {
                         "Hint \(hintLevel) of \(currentHints.count). \(revealedHint)"
                     )
                 
-            } else if phase == .ready {
-                Text("USES THE FRONT CAMERA · NOTHING IS SAVED")
-                    .voidText(.label)
-                    .foregroundStyle(VoidTheme.secondary)
-                
             } else if let primaryText {
                 Text(primaryText)
                     .voidText(.body)
@@ -348,10 +426,11 @@ struct FaceTrackingView: View {
 
                 case .calibrating, .observing, .preparing, .reconstructing:
                     HStack(spacing: 8) {
-                        if hintLevel < currentHints.count {
+                        if hintAvailable && hintLevel < currentHints.count {
                             PuzzleHintButton(
                                 level: $hintLevel,
-                                count: currentHints.count
+                                count: currentHints.count,
+                                isAvailable: hintAvailable
                             )
                         }
 
@@ -406,9 +485,9 @@ struct FaceTrackingView: View {
 
     private var currentHints: [String] {
         [
-            "What you saw is still there.",
-            "Remember the order, not the shapes.",
-            "Move only when you know where to go."
+            "Not everything needs your eyes.",
+            "You remember what you saw, don't you?",
+            "Close your eyes. Recreate the pattern with your head."
         ]
     }
 
@@ -463,7 +542,7 @@ struct FaceTrackingView: View {
 
         switch phase {
         case .ready:
-            return "WAITING"
+            return ""
         case .calibrating:
             return face.isFaceDetected ? "CALIBRATING" : "SEARCHING"
         case .observing:

@@ -194,8 +194,12 @@ final class FaceTrackingManager: NSObject, ObservableObject, ARSessionDelegate {
     // MARK: - Helpers
 
     private func updateOnMain(_ action: @escaping () -> Void) {
-        DispatchQueue.main.async {
+        if Thread.isMainThread {
             action()
+        } else {
+            DispatchQueue.main.async {
+                action()
+            }
         }
     }
 }

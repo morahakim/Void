@@ -29,11 +29,6 @@ struct PuzzleSelectionView: View {
                         .font(.system(size: 30, weight: .light))
                         .tracking(3)
                         .foregroundStyle(.white)
-
-                    Text("SOME THINGS ARE BETTER LEFT UNSEEN.")
-                        .font(.system(size: 9, weight: .medium))
-                        .tracking(1.5)
-                        .foregroundStyle(VoidTheme.secondary)
                 }
                 .padding(.top, 65)
                 .padding(.bottom, 24)

@@ -15,6 +15,7 @@ struct PuzzleView: View {
 
     @StateObject private var motion = MotionManager()
     @State private var hintLevel = 0
+    @State private var hintAvailable = false
 
     private enum Phase {
         case seek
@@ -31,6 +32,9 @@ struct PuzzleView: View {
     @State private var showReverseSymbol = false
     @State private var targetPulse = false
     @State private var completionScale: CGFloat = 0.7
+    @State private var completionRingActive = false
+    @State private var completionTextVisible = false
+    @State private var completionActionsVisible = false
 
     private let targetSize: CGFloat = 46
     private let ballSize: CGFloat = 18
@@ -79,8 +83,19 @@ struct PuzzleView: View {
             updatePuzzle(x: x, y: y, z: z)
         }
         .onChange(of: phase) { _, _ in
-            // Each phase has its own hints; start each one fresh.
             hintLevel = 0
+            hintAvailable = false
+        }
+        .task(id: phase) {
+            hintAvailable = false
+
+            guard phase != .completed else { return }
+
+            try? await Task.sleep(for: .seconds(hintDelay))
+
+            guard !Task.isCancelled else { return }
+
+            hintAvailable = true
         }
     }
 
@@ -125,40 +140,51 @@ struct PuzzleView: View {
                 Circle()
                     .fill(
                         phase == .completed
-                        ? VoidColor.success
-                        : targetPulse
-                            ? VoidTheme.accent
-                            : VoidTheme.secondary.opacity(0.35)
+                            ? VoidColor.success
+                            : targetPulse
+                                ? VoidTheme.accent.opacity(
+                                    0.65 + Double(holdIntensity) * 0.35
+                                )
+                                : VoidTheme.secondary.opacity(0.35)
                     )
                     .frame(
                         width: targetSize,
                         height: targetSize
                     )
                     .scaleEffect(
-                        phase == .completed ? completionScale : (targetPulse ? 1.2 : 1.0)
+                        phase == .completed
+                            ? completionScale
+                            : targetPulse
+                                ? 1.2
+                                : 1.0 + targetProximity * 0.12
                     )
                     .shadow(
                         color: targetPulse
-                        ? (phase == .completed ? VoidColor.success : VoidTheme.accent).opacity(0.6)
-                        : .clear,
-                        radius: targetPulse ? 20 : 0
+                            ? (phase == .completed
+                                ? VoidColor.success
+                                : VoidTheme.accent).opacity(
+                                    0.35 + Double(holdIntensity) * 0.4
+                                )
+                            : VoidTheme.accent.opacity(
+                                Double(targetProximity) * 0.45
+                            ),
+                        radius: targetPulse
+                            ? 14 + holdIntensity * 16
+                            : targetProximity * 14
                     )
                     .position(
                         x: geometry.size.width / 2,
                         y: geometry.size.height / 2
                     )
                     .animation(
-                        .easeInOut(duration: 0.6),
-                        value: targetPulse
+                        .easeOut(duration: 0.15),
+                        value: targetProximity
                     )
 
                 if phase == .seek || phase == .hold {
                     Circle()
                         .fill(.white)
-                        .frame(
-                            width: ballSize,
-                            height: ballSize
-                        )
+                        .frame(width: ballSize, height: ballSize)
                         .position(
                             x: geometry.size.width / 2 + ballPosition.x,
                             y: geometry.size.height / 2 + ballPosition.y
@@ -168,6 +194,33 @@ struct PuzzleView: View {
                             radius: 12
                         )
                 }
+
+                // COMPLETION RING
+                Circle()
+                    .stroke(
+                        VoidColor.success.opacity(
+                            phase == .completed
+                                ? (completionRingActive ? 0 : 0.65)
+                                : 0
+                        ),
+                        lineWidth: 2
+                    )
+                    .frame(
+                        width: targetSize,
+                        height: targetSize
+                    )
+                    .scaleEffect(
+                        completionRingActive ? 1.9 : 0.65
+                    )
+                    .position(
+                        x: geometry.size.width / 2,
+                        y: geometry.size.height / 2
+                    )
+                    .animation(
+                        .easeOut(duration: 0.9),
+                        value: completionRingActive
+                    )
+                    .allowsHitTesting(false)
 
                 if phase == .reverse || phase == .completed {
                     Image(systemName: "arrow.uturn.down")
@@ -221,9 +274,11 @@ struct PuzzleView: View {
                     .foregroundStyle(.white)
 
                 ProgressView(value: holdProgress)
-                    .tint(.white)
-                    .frame(width: 140)
+                    .tint(VoidTheme.accent)
+                    .frame(width: 160)
+                    .animation(.linear(duration: 0.1), value: holdProgress)
                     .accessibilityLabel("Hold")
+                    .accessibilityValue("\(Int(holdProgress * 100)) percent")
 
                 hintSection(
                         primary: "Some things require stillness.",
@@ -235,15 +290,18 @@ struct PuzzleView: View {
                     )
 
             case .reverse:
-                Text("TURN IT OVER")
-                    .voidText(.headline)
-                    .foregroundStyle(.white)
+                if hintLevel == 0 {
+                    Text("...")
+                        .voidText(.headline)
+                        .foregroundStyle(.white)
+                        .transition(.opacity)
+                }
 
                 hintSection(
                     primary: "The other side is waiting.",
                     hints: [
-                        "You are holding the answer.",
-                        "What if the screen wasn't facing you?",
+                        "There is more to this device than its screen.",
+                        "Maybe the answer is on the other side.",
                         "Turn your device face down."
                     ]
                 )
@@ -252,6 +310,12 @@ struct PuzzleView: View {
                 Text("FOUND IT.")
                     .voidText(.headline)
                     .foregroundStyle(.white)
+                    .opacity(completionTextVisible ? 1 : 0)
+                    .offset(y: completionTextVisible ? 0 : 8)
+                    .animation(
+                        .easeOut(duration: 0.4),
+                        value: completionTextVisible
+                    )
 
                 VStack(spacing: 4) {
                     Button("CONTINUE") {
@@ -263,9 +327,17 @@ struct PuzzleView: View {
                         restartPuzzle()
                     }
                     .buttonStyle(VoidSecondaryButtonStyle())
+                    .opacity(0.65)
                 }
+                .opacity(completionActionsVisible ? 1 : 0)
+                .offset(y: completionActionsVisible ? 0 : 10)
+                .animation(
+                    .easeOut(duration: 0.45),
+                    value: completionActionsVisible
+                )
             }
         }
+        .animation(.easeInOut(duration: 0.3), value: hintLevel)
         .frame(maxWidth: .infinity)
         .frame(minHeight: 200, alignment: .top)
     }
@@ -276,7 +348,12 @@ struct PuzzleView: View {
         primary: String,
         hints: [String]
     ) -> some View {
-        PuzzleHints(primary: primary, hints: hints, level: $hintLevel)
+        PuzzleHints(
+            primary: primary,
+            hints: hints,
+            level: $hintLevel,
+            isHintAvailable: hintAvailable
+        )
     }
 
     // MARK: - Derived State
@@ -290,6 +367,29 @@ struct PuzzleView: View {
         case .reverse, .completed:
             return 3
         }
+    }
+    
+    private var targetProximity: CGFloat {
+        let distance = hypot(
+            ballPosition.x,
+            ballPosition.y
+        )
+
+        return min(max(1 - distance / 80, 0), 1)
+    }
+    
+    private var hintDelay: Double {
+        switch phase {
+        case .seek, .hold, .reverse:
+            50
+        case .completed:
+            0
+        }
+    }
+    
+    private var holdIntensity: CGFloat {
+        guard phase == .hold else { return 0 }
+        return CGFloat(holdProgress)
     }
 
     private var phaseName: String {
@@ -403,6 +503,18 @@ struct PuzzleView: View {
                     completionScale = 1.15
                 }
 
+                withAnimation(.easeOut(duration: 0.9).delay(0.1)) {
+                    completionRingActive = true
+                }
+                
+                withAnimation(.easeOut(duration: 0.4).delay(0.25)) {
+                    completionTextVisible = true
+                }
+
+                withAnimation(.easeOut(duration: 0.45).delay(0.65)) {
+                    completionActionsVisible = true
+                }
+
                 provideSuccessFeedback()
             }
 
@@ -446,6 +558,9 @@ struct PuzzleView: View {
         targetPulse = false
 
         completionScale = 0.7
+        completionRingActive = false
+        completionTextVisible = false
+        completionActionsVisible = false
 
         motion.startUpdates()
     }

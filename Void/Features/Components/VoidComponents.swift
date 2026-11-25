@@ -176,6 +176,7 @@ struct PuzzleHints: View {
     let hints: [String]
     @Binding var level: Int
 
+    var isHintAvailable: Bool = true
     private var revealedHint: String? {
         level > 0 && level <= hints.count ? hints[level - 1] : nil
     }
@@ -191,8 +192,8 @@ struct PuzzleHints: View {
                     revealedHint.map { "Hint \(level) of \(hints.count). \($0)" } ?? primary
                 )
 
-            if level < hints.count {
-                PuzzleHintButton(level: $level, count: hints.count)
+            if isHintAvailable && level < hints.count {
+                PuzzleHintButton(level: $level, count: hints.count, isAvailable: isHintAvailable)
             }
         }
         .multilineTextAlignment(.center)
@@ -203,14 +204,17 @@ struct PuzzleHints: View {
 struct PuzzleHintButton: View {
     @Binding var level: Int
     let count: Int
+    let isAvailable: Bool
 
     var body: some View {
         Button(level == 0 ? "NEED A HINT?" : "NEXT HINT") {
-            withAnimation(.easeInOut(duration: 0.25)) {
+            withAnimation(.easeInOut(duration: 0.60)) {
                 level += 1
             }
         }
         .buttonStyle(VoidSecondaryButtonStyle(tint: VoidTheme.accent))
+        .disabled(!isAvailable)
+        .opacity(isAvailable ? 1 : 0.60)
         .accessibilityHint("\(count - level) hints left")
     }
 }
